@@ -949,16 +949,30 @@ function RoomBtn({ icon, label, desc, color, available, locked, onClick, onUpgra
 // ══════════════════════════════════════════════════════════════════════════════
 // ROOM SETUP
 // ══════════════════════════════════════════════════════════════════════════════
-function RoomSetup({ count, hasVideo, hasEarpiece, user, onStart, onBack }) {
+function RoomSetup({ count, hasVideo, hasEarpiece, user, onStart, onBack, prefilledRoomCode }) {
   const { isMobile } = useBreakpoint();
   const spks = ["A","B",...(count===3?["C"]:[])];
-  const [names,setNames]=useState({ A:user.name, B:"Participante B", C:"Participante C" });
+  const [names,setNames]=useState({ A:user?.name||"Yo", B:"Participante B", C:"Participante C" });
   const [langs,setLangs]=useState({ A:"es", B:"en", C:"fr" });
-  const [roomCode]=useState(genCode);
+  // FIX: usar roomCode de URL si existe, sino generar uno nuevo y persistirlo
+  const [roomCode]=useState(() => {
+    if (prefilledRoomCode) return prefilledRoomCode;
+    const existing = sessionStorage.getItem("gm_current_room");
+    if (existing) return existing;
+    const newCode = genCode();
+    sessionStorage.setItem("gm_current_room", newCode);
+    return newCode;
+  });
   const [copied,setCopied]=useState(false);
-  const roomLink=`${window.location.href.split("?")[0]}?room=${roomCode}`;
+  const roomLink=`${window.location.origin}?room=${roomCode}`;
   const copyLink=()=>{ navigator.clipboard.writeText(roomLink); setCopied(true); setTimeout(()=>setCopied(false),2200); };
   const usedLangs=spk=>Object.entries(langs).filter(([k])=>k!==spk).map(([,v])=>v);
+
+  // Limpiar sala al iniciar nueva
+  const handleStart = (cfg) => {
+    sessionStorage.removeItem("gm_current_room");
+    onStart(cfg);
+  };
 
   return (
     <div style={{ minHeight:"100vh", background:"#080c14", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',system-ui,sans-serif", padding:"16px" }}>
@@ -1002,12 +1016,67 @@ function RoomSetup({ count, hasVideo, hasEarpiece, user, onStart, onBack }) {
           })}
         </div>
 
-        <button onClick={()=>onStart({names,langs,roomCode,count,hasVideo,hasEarpiece})} style={{ width:"100%", background:hasEarpiece?"linear-gradient(135deg,#b45309,#f59e0b)":hasVideo?"linear-gradient(135deg,#0f766e,#0d9488)":"linear-gradient(135deg,#4f46e5,#7c3aed)", border:"none", color:"#fff", borderRadius:"10px", padding:"12px", fontSize:".88rem", fontWeight:"600", cursor:"pointer", fontFamily:"inherit", touchAction:"manipulation" }}>
+        <button onClick={()=>handleStart({names,langs,roomCode,count,hasVideo,hasEarpiece})} style={{ width:"100%", background:hasEarpiece?"linear-gradient(135deg,#b45309,#f59e0b)":hasVideo?"linear-gradient(135deg,#0f766e,#0d9488)":"linear-gradient(135deg,#4f46e5,#7c3aed)", border:"none", color:"#fff", borderRadius:"10px", padding:"12px", fontSize:".88rem", fontWeight:"600", cursor:"pointer", fontFamily:"inherit", touchAction:"manipulation" }}>
           {hasEarpiece?"🎧 Iniciar modo auricular →":hasVideo?"🎥 Iniciar videollamada →":"💬 Iniciar chat →"}
         </button>
       </div>
     </div>
   );
+}
+
+// ── Sonido de notificación (Web Audio API — sin archivos externos) ─────────────
+function playJoinSound() {
+  try {
+    const ctx  = new (window.AudioContext || window.webkitAudioContext)();
+    const t    = ctx.currentTime;
+    // Dos tonos ascendentes tipo "chat"
+    [[440, t, 0.08], [554, t+0.1, 0.08], [659, t+0.2, 0.1]].forEach(([freq, start, dur]) => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.setValueAtTime(freq, start);
+      osc.type = "sine";
+      gain.gain.setValueAtTime(0.3, start);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
+      osc.start(start); osc.stop(start + dur);
+    });
+  } catch {}
+}
+
+// ── Presence: detectar cuando alguien entra a la sala ─────────────────────────
+function usePresence(roomCode, userName) {
+  const [participants, setParticipants] = useState([]);
+
+  useEffect(() => {
+    if (!roomCode || !userName) return;
+    const channel = supabase.channel(`presence:${roomCode}`, {
+      config: { presence: { key: userName } }
+    });
+
+    channel
+      .on("presence", { event: "sync" }, () => {
+        const state = channel.presenceState();
+        const names = Object.keys(state).map(k => state[k][0]?.name || k);
+        setParticipants(names);
+      })
+      .on("presence", { event: "join" }, ({ key, newPresences }) => {
+        const name = newPresences[0]?.name || key;
+        if (name !== userName) {
+          playJoinSound();
+          // Vibrar en mobile
+          try { if (navigator.vibrate) navigator.vibrate([100, 50, 100]); } catch {}
+        }
+      })
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          await channel.track({ name: userName, joinedAt: Date.now() });
+        }
+      });
+
+    return () => { supabase.removeChannel(channel); };
+  }, [roomCode, userName]);
+
+  return participants;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1122,17 +1191,39 @@ function ChatRoom({ config, onBack }) {
   const { isMobile } = useBreakpoint();
   const {messages,activeSpk,interims,participants,toggleMic,submitText}=useChatLogic(config);
   const [copied,setCopied]=useState(false);
+  const [joinNotif, setJoinNotif] = useState(null);
   const bottomRef=useRef(null);
   useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); },[messages,interims]);
-  const roomLink=`${window.location.href.split("?")[0]}?room=${config.roomCode}`;
+
+  // Presence — detectar cuando alguien entra
+  const presenceList = usePresence(config.roomCode, config.names?.A || "Usuario");
+  const prevPresence = useRef([]);
+  useEffect(() => {
+    const prev = prevPresence.current;
+    const newOnes = presenceList.filter(n => !prev.includes(n) && n !== (config.names?.A || "Usuario"));
+    if (newOnes.length > 0) {
+      setJoinNotif(`${newOnes[0]} se unió a la sala`);
+      setTimeout(() => setJoinNotif(null), 3000);
+    }
+    prevPresence.current = presenceList;
+  }, [presenceList]);
+
+  const roomLink=`${window.location.origin}?room=${config.roomCode}`;
   const copyLink=()=>{ navigator.clipboard.writeText(roomLink); setCopied(true); setTimeout(()=>setCopied(false),2000); };
 
-  // Mobile: show one mic at a time — tap to select which participant
+  // Mobile: show one mic at a time
   const [activeMobile, setActiveMobile] = useState(null);
 
   return (
     <div style={{ height:"100dvh", background:"#080c14", display:"flex", flexDirection:"column", fontFamily:"'Segoe UI',system-ui,sans-serif", overflow:"hidden" }}>
       <BrowserBanner />
+      {/* Join notification */}
+      {joinNotif && (
+        <div style={{ position:"fixed", top:"60px", left:"50%", transform:"translateX(-50%)", background:"rgba(99,102,241,.95)", borderRadius:"20px", padding:"8px 18px", color:"#fff", fontSize:".8rem", fontWeight:"600", zIndex:100, boxShadow:"0 4px 20px rgba(0,0,0,.4)", animation:"fadeIn .3s ease", display:"flex", alignItems:"center", gap:"7px" }}>
+          <style>{`@keyframes fadeIn{from{opacity:0;transform:translateX(-50%) translateY(-8px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}`}</style>
+          👋 {joinNotif}
+        </div>
+      )}
       {/* Header */}
       <div style={{ background:"rgba(8,12,20,.96)", borderBottom:"1px solid rgba(255,255,255,.07)", padding: isMobile?"9px 12px":"10px 14px", display:"flex", alignItems:"center", justifyContent:"space-between", backdropFilter:"blur(10px)", flexShrink:0 }}>
         <AppLogo size={24} withText />
@@ -1419,7 +1510,7 @@ function EarpieceRoom({ config, onBack }) {
     window.speechSynthesis.speak(utt);
   }, [getVoice, volume]);
 
-  // Main listen loop
+  // Main listen loop — FIX: escucha en español para detectar "Hola GlobalMeet"
   const startListening = useCallback(() => {
     if (!BROWSER.micOk) return;
     const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1429,12 +1520,15 @@ function EarpieceRoom({ config, onBack }) {
     const otherLangs = Object.fromEntries(others.map(p => [p, LANGUAGES.find(l => l.code === config.langs[p])]));
 
     const rec = new SR();
-    rec.lang = myLang?.bcp ?? "es-ES";
+    // SIEMPRE escuchar en español primero para capturar "Hola GlobalMeet"
+    // independientemente del idioma del participante
+    rec.lang = "es-ES";
     rec.continuous = false;
     rec.interimResults = true;
 
     let activated = false;
     let finalText = "";
+    let wakePhase = true; // true = esperando wake word, false = escuchando contenido
 
     rec.onstart = () => setStatus("waiting");
 
@@ -1446,8 +1540,11 @@ function EarpieceRoom({ config, onBack }) {
       }
       const full = (finalText || interim).toLowerCase().trim();
 
-      // Detect wake word
-      if (!activated && full.includes(WAKE_WORD)) {
+      // Detectar wake word — acepta variaciones comunes
+      const wakeVariants = ["hola globalmeet", "hola global meet", "ola globalmeet", "hola globe meet", "hola globalmed"];
+      const detected = wakeVariants.some(w => full.includes(w));
+
+      if (!activated && detected) {
         activated = true;
         setStatus("listening");
         setTranscript("");
@@ -1753,7 +1850,7 @@ export default function App() {
   if (screen === "login")        return <LoginScreen onLogin={handleLogin} />;
   if (screen === "trialExpired") return <TrialExpiredWall onGoPlans={() => setScreen("landing")} />;
   if (screen === "dashboard")    return <Dashboard user={user} plan={plan} onStartRoom={handleStart} onGoPlans={() => setScreen("landing")} onLogout={handleLogout} />;
-  if (screen === "roomSetup")    return <RoomSetup count={roomCount} hasVideo={hasVideo} hasEarpiece={hasEarpiece} user={user} onStart={handleLaunch} onBack={() => setScreen("dashboard")} />;
+  if (screen === "roomSetup")    return <RoomSetup count={roomCount} hasVideo={hasVideo} hasEarpiece={hasEarpiece} user={user} onStart={handleLaunch} onBack={() => setScreen("dashboard")} prefilledRoomCode={chatCfg?.roomCode} />;
   if (screen === "chat")         return <ChatRoom config={chatCfg} onBack={() => setScreen("dashboard")} />;
   if (screen === "enterprise")   return <EnterpriseRoom config={chatCfg} onBack={() => setScreen("dashboard")} />;
   if (screen === "earpiece")     return <EarpieceRoom config={chatCfg} onBack={() => setScreen("dashboard")} />;
