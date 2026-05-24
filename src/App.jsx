@@ -2085,6 +2085,65 @@ function EarpieceRoom({ config, onBack, onGoHome }) {
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
+  // ── Escuchar mensajes entrantes de otros participantes y reproducirlos ────────
+  useEffect(() => {
+    const myKey      = config.myKey || "A";
+    const myLangCode = config.langs?.[myKey] || "es";
+    const myLang     = LANGUAGES.find(l => l.code === myLangCode);
+
+    // Cargar mensajes previos
+    supabase.from("messages").select("*")
+      .eq("room_code", config.roomCode)
+      .order("created_at", { ascending: true })
+      .then(({ data }) => {
+        if (data) setMessages(data.map(m => ({
+          id: m.id, speaker: m.speaker, speakerName: m.speaker_name,
+          speakerFlag: m.speaker_flag, original: m.original,
+          translations: m.translations || {}, targetLangs: m.target_langs || {},
+          time: new Date(m.created_at).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }),
+          myTranslation: (m.translations || {})[myKey] || null,
+        })));
+      });
+
+    // Escuchar mensajes nuevos en tiempo real
+    const channel = supabase.channel(`earpiece:${config.roomCode}`)
+      .on("postgres_changes", {
+        event: "*", schema: "public", table: "messages",
+        filter: `room_code=eq.${config.roomCode}`
+      }, (payload) => {
+        const m = payload.new; if (!m) return;
+
+        const msg = {
+          id: m.id, speaker: m.speaker, speakerName: m.speaker_name,
+          speakerFlag: m.speaker_flag, original: m.original,
+          translations: m.translations || {}, targetLangs: m.target_langs || {},
+          time: new Date(m.created_at).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }),
+          myTranslation: (m.translations || {})[myKey] || null,
+        };
+
+        // Actualizar lista de mensajes
+        if (payload.eventType === "INSERT") {
+          setMessages(prev => prev.find(x => x.id === msg.id) ? prev : [...prev, msg]);
+        } else if (payload.eventType === "UPDATE") {
+          setMessages(prev => prev.map(x => x.id === msg.id ? { ...x, ...msg } : x));
+
+          // ✅ REPRODUCIR AUTOMÁTICAMENTE cuando llega la traducción para mí
+          const myTranslation = (m.translations || {})[myKey];
+          if (myTranslation && m.speaker !== myKey && !speaking.current && audioMode !== "text") {
+            // Esperar un momento para no interrumpir si estoy hablando
+            setTimeout(() => {
+              if (!speaking.current) {
+                speak(myTranslation, myLang?.bcp || "es-ES");
+              }
+            }, 300);
+          }
+        }
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [config.roomCode, config.myKey, config.langs, audioMode, speak]);
+
   // Get TTS voice based on selection and target language
   const getVoice = useCallback((langBcp) => {
     const opt = VOICE_OPTIONS.find(v => v.id === voiceId) || VOICE_OPTIONS[0];
@@ -2101,46 +2160,38 @@ function EarpieceRoom({ config, onBack, onGoHome }) {
   // Speak translation — respeta el modo de audio
   const speak = useCallback((text, langBcp) => {
     if (!text || speaking.current) return;
-    // Si es solo texto, no reproducir audio
-    if (audioMode === "text") {
-      speaking.current = false;
-      setStatus("waiting");
-      startListening();
-      return;
-    }
+    if (audioMode === "text") return; // solo texto, no reproducir
     window.speechSynthesis.cancel();
     const utt = new SpeechSynthesisUtterance(text);
     const { voice, rate, pitch } = getVoice(langBcp);
     if (voice) utt.voice = voice;
-    utt.rate = rate; utt.pitch = pitch; utt.volume = volume;
-    // Modo altavoz: volumen máximo
-    if (audioMode === "speaker") utt.volume = 1;
+    utt.rate = rate; utt.pitch = pitch;
+    utt.volume = audioMode === "speaker" ? 1 : volume;
     speaking.current = true;
     setStatus("speaking");
-    utt.onend  = () => { speaking.current = false; setStatus("waiting"); startListening(); };
+    utt.onend  = () => { speaking.current = false; setStatus("waiting"); };
     utt.onerror= () => { speaking.current = false; setStatus("waiting"); };
     window.speechSynthesis.speak(utt);
   }, [getVoice, volume, audioMode]);
 
-  // Main listen loop — FIX: escucha en español para detectar "Hola GlobalMeet"
+  // Main listen loop
   const startListening = useCallback(() => {
     if (!BROWSER.micOk) return;
+    if (speaking.current) return; // no escuchar mientras habla
     const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const spk = activeSpeaker;
-    const myLang = LANGUAGES.find(l => l.code === config.langs[spk]);
-    const others = participants.filter(p => p !== spk);
+    if (!SR) return;
+    const spk    = activeSpeaker;
+    const myLang = LANGUAGES.find(l => l.code === config.langs?.[spk]);
+    const others = ["A","B","C"].filter(p => p !== spk && config.langs?.[p]);
     const otherLangs = Object.fromEntries(others.map(p => [p, LANGUAGES.find(l => l.code === config.langs[p])]));
 
     const rec = new SR();
-    // SIEMPRE escuchar en español primero para capturar "Hola GlobalMeet"
-    // independientemente del idioma del participante
-    rec.lang = "es-ES";
+    rec.lang = "es-ES"; // siempre español para detectar wake word
     rec.continuous = false;
     rec.interimResults = true;
 
     let activated = false;
     let finalText = "";
-    let wakePhase = true; // true = esperando wake word, false = escuchando contenido
 
     rec.onstart = () => setStatus("waiting");
 
@@ -2151,12 +2202,8 @@ function EarpieceRoom({ config, onBack, onGoHome }) {
         else interim += e.results[i][0].transcript;
       }
       const full = (finalText || interim).toLowerCase().trim();
-
-      // Detectar wake word — acepta variaciones comunes
-      const wakeVariants = ["hola globalmeet", "hola global meet", "ola globalmeet", "hola globe meet", "hola globalmed"];
-      const detected = wakeVariants.some(w => full.includes(w));
-
-      if (!activated && detected) {
+      const wakeVariants = ["hola globalmeet","hola global meet","ola globalmeet","hola globalmed","hola globe meet"];
+      if (!activated && wakeVariants.some(w => full.includes(w))) {
         activated = true;
         setStatus("listening");
         setTranscript("");
@@ -2166,11 +2213,15 @@ function EarpieceRoom({ config, onBack, onGoHome }) {
     };
 
     rec.onend = async () => {
-      if (!activated || !finalText.trim()) { startListening(); return; }
+      if (!activated || !finalText.trim()) {
+        // No se detectó wake word — volver a escuchar después de un momento
+        setStatus("waiting");
+        if (!speaking.current) setTimeout(() => startListening(), 800);
+        return;
+      }
       setTranscript("");
       setStatus("translating");
 
-      // Translate to all other participants
       const translations = {};
       await Promise.all(others.map(async p => {
         const t = await claudeTranslate(finalText.trim(), myLang?.label, otherLangs[p]?.label);
@@ -2179,40 +2230,53 @@ function EarpieceRoom({ config, onBack, onGoHome }) {
 
       const msg = {
         id: Date.now(), speaker: spk,
-        speakerName: config.names[spk], speakerFlag: myLang?.flag,
-        original: finalText.trim(), translations,
-        targetLangs: otherLangs, time: nowTime(),
+        speakerName: config.names?.[spk] || spk,
+        speakerFlag: myLang?.flag,
+        original: finalText.trim(),
+        translations,
+        targetLangs: otherLangs,
+        time: nowTime(),
       };
       setMessages(prev => [...prev, msg]);
       setLastMsg(msg);
 
-      // Speak first translation
+      // Hablar primera traducción
       const firstOther = others[0];
-      if (translations[firstOther]) {
+      if (translations[firstOther] && audioMode !== "text") {
         speak(translations[firstOther], otherLangs[firstOther]?.bcp);
-      } else {
-        setStatus("waiting");
-        startListening();
       }
+      setStatus("waiting");
+      // Volver a escuchar después de hablar
+      setTimeout(() => { if (!speaking.current) startListening(); }, 3000);
     };
 
-    rec.onerror = () => { setStatus("waiting"); setTimeout(startListening, 1000); };
-    recRef.current = rec;
-    rec.start();
-  }, [activeSpeaker, config, participants, speak]);
+    rec.onerror = () => {
+      setStatus("waiting");
+      if (!speaking.current) setTimeout(startListening, 1500);
+    };
 
-  // Start on mount
+    recRef.current = rec;
+    try { rec.start(); } catch {}
+  }, [activeSpeaker, config, speak, audioMode]);
+
+  // Start on mount — solo una vez
   useEffect(() => {
-    if (BROWSER.micOk) startListening();
-    return () => { recRef.current?.stop(); window.speechSynthesis.cancel(); };
+    const timer = setTimeout(() => {
+      if (BROWSER.micOk) startListening();
+    }, 500);
+    return () => {
+      clearTimeout(timer);
+      recRef.current?.stop();
+      window.speechSynthesis.cancel();
+    };
   }, []);
 
-  // Restart when speaker changes
+  // Restart when speaker or voice changes
   useEffect(() => {
     recRef.current?.stop();
     window.speechSynthesis.cancel();
     speaking.current = false;
-    if (BROWSER.micOk) setTimeout(startListening, 500);
+    if (BROWSER.micOk) setTimeout(startListening, 600);
   }, [activeSpeaker, voiceId]);
 
   const statusInfo = {
@@ -2332,22 +2396,55 @@ function EarpieceRoom({ config, onBack, onGoHome }) {
           {messages.length === 0 && (
             <div style={{ textAlign: "center", color: "#1e293b", padding: "20px 0" }}>
               <div style={{ fontSize: "1.6rem", marginBottom: "6px" }}>🎧</div>
-              <div style={{ fontSize: ".74rem", color: "#334155" }}>Las conversaciones traducidas aparecerán acá</div>
+              <div style={{ fontSize: ".74rem", color: "#334155" }}>Cuando alguien hable, la traducción aparecerá acá y se reproducirá en tu auricular</div>
             </div>
           )}
           {messages.map(msg => {
-            const c = SPK[msg.speaker]; const isA = msg.speaker === "A";
+            const myKey      = config.myKey || "A";
+            const isMe       = msg.speaker === myKey;
+            const myLangCode = config.langs?.[myKey] || "es";
+            const myTranslation = msg.translations?.[myKey];
+            const myLangObj  = LANGUAGES.find(l => l.code === myLangCode);
+            const colors     = ["#1d4ed8","#be185d","#047857","#7c3aed","#b45309"];
+            const spkIdx     = ["A","B","C","D","E"].indexOf(msg.speaker);
+            const spkColor   = colors[spkIdx >= 0 ? spkIdx : 0];
+
             return (
-              <div key={msg.id} style={{ display: "flex", flexDirection: "column", alignItems: isA ? "flex-start" : "flex-end", marginBottom: "10px", animation: "fadeIn .3s ease" }}>
-                <div style={{ fontSize: ".58rem", color: c.light, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: "2px" }}>{msg.speakerName}</div>
-                <div style={{ maxWidth: "82%", background: c.bg, border: `1px solid ${c.border}`, borderRadius: isA ? "4px 12px 12px 12px" : "12px 4px 12px 12px", padding: "7px 10px" }}>
-                  <div style={{ color: "#e2e8f0", fontSize: ".82rem" }}>{msg.speakerFlag} {msg.original}</div>
-                  {Object.entries(msg.translations).map(([spk, t]) => {
-                    const tc = SPK[spk]; const tl = msg.targetLangs?.[spk];
-                    return <div key={spk} style={{ marginTop: "4px", paddingTop: "4px", borderTop: "1px solid rgba(255,255,255,.05)", color: tc?.light, fontSize: ".72rem", fontStyle: "italic" }}>{tl?.flag} {t}</div>;
-                  })}
+              <div key={msg.id} style={{ marginBottom: "12px", animation: "fadeIn .3s ease" }}>
+                {/* Mensaje original */}
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px" }}>
+                  <div style={{ width: "22px", height: "22px", borderRadius: "50%", background: spkColor, display: "flex", alignItems: "center", justifyContent: "center", fontSize: ".6rem", color: "#fff", fontWeight: "700", flexShrink: 0 }}>
+                    {msg.speakerName?.charAt(0) || "?"}
+                  </div>
+                  <span style={{ color: "#64748b", fontSize: ".68rem" }}>{msg.speakerName}</span>
+                  <span style={{ color: "#1e293b", fontSize: ".6rem" }}>{msg.time}</span>
+                  {isMe && <span style={{ color: "#4f46e5", fontSize: ".6rem", fontWeight: "600" }}>· vos</span>}
                 </div>
-                <div style={{ fontSize: ".52rem", color: "#1e293b", marginTop: "2px" }}>{msg.time}</div>
+
+                {/* Original */}
+                <div style={{ background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)", borderRadius: "8px", padding: "7px 10px", marginLeft: "28px", marginBottom: "4px" }}>
+                  <span style={{ color: "#94a3b8", fontSize: ".78rem" }}>{msg.speakerFlag} {msg.original}</span>
+                </div>
+
+                {/* Mi traducción — destacada */}
+                {!isMe && myTranslation && (
+                  <div style={{ background: "rgba(251,191,36,.08)", border: "1px solid rgba(251,191,36,.25)", borderRadius: "8px", padding: "8px 11px", marginLeft: "28px", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span style={{ fontSize: ".9rem", flexShrink: 0 }}>{myLangObj?.flag}</span>
+                    <span style={{ color: "#fbbf24", fontSize: ".84rem", fontWeight: "500", flex: 1 }}>{myTranslation}</span>
+                    {audioMode !== "text" && (
+                      <button onClick={() => speak(myTranslation, myLangObj?.bcp)} style={{ background: "none", border: "none", color: "#f59e0b", cursor: "pointer", fontSize: ".8rem", flexShrink: 0 }} title="Reproducir">🔊</button>
+                    )}
+                  </div>
+                )}
+
+                {/* Traduciendo... */}
+                {!isMe && !myTranslation && (
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", marginLeft: "28px", color: "#475569", fontSize: ".72rem" }}>
+                    <div style={{ width: "8px", height: "8px", border: "1.5px solid #334155", borderTopColor: "#94a3b8", borderRadius: "50%", animation: "spin .7s linear infinite" }} />
+                    <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+                    Traduciendo...
+                  </div>
+                )}
               </div>
             );
           })}
