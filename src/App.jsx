@@ -131,10 +131,10 @@ const PLANS = [
     features: ["🎁 7 días gratis para probar", "2 participantes", "Conversaciones ilimitadas", "10 idiomas", "Link compartible", "Historial", "Notificaciones email"] },
   { id: "pro",        name: "Pro",        emoji: "🚀", badge: "7 días gratis",        priceMonthly: PRECIOS.pro.mensual,        priceAnnual: PRECIOS.pro.anual,         color: "#7c3aed", accent: "#a78bfa", participants: 3, hasVideo: false, hasEarpiece: false, mpLink: MP_LINKS.pro,          usd: "~USD 17",  trialDays: 7,
     features: ["🎁 7 días gratis para probar", "3 participantes", "Conversaciones ilimitadas", "10 idiomas", "Link compartible", "Historial", "Notificaciones email", "Soporte prioritario"] },
-  { id: "enterprise", name: "Enterprise", emoji: "🎥", badge: "7 días gratis",        priceMonthly: PRECIOS.enterprise.mensual, priceAnnual: PRECIOS.enterprise.anual,  color: "#0f766e", accent: "#2dd4bf", participants: 3, hasVideo: true,  hasEarpiece: false, mpLink: MP_LINKS.enterprise,   usd: "~USD 32",  trialDays: 7,
-    features: ["🎁 7 días gratis para probar", "3 participantes", "📹 Videollamada Jitsi", "💬 Chat traductor", "🖥️ Compartir pantalla", `📁 Archivos hasta ${MAX_FILE_MB}MB`, "10 idiomas", "Soporte 24/7"] },
-  { id: "auricular",  name: "Auricular",  emoji: "🎧", badge: "7 días gratis",        priceMonthly: PRECIOS.auricular.mensual, priceAnnual: PRECIOS.auricular.anual,   color: "#b45309", accent: "#fbbf24", participants: 3, hasVideo: false, hasEarpiece: true,  mpLink: MP_LINKS.auricular,    usd: "~USD 42",  trialDays: 7,
-    features: ["🎁 7 días gratis para probar", "3 participantes", "🎧 Traducción simultánea por auricular", "🗣️ Voz masculina o femenina", "🎙️ Comando 'Hola GlobalMeet'", "Manos libres · sin tocar pantalla", "10 idiomas en tiempo real", "Funciona con cualquier auricular Bluetooth", "Soporte 24/7"] },
+  { id: "enterprise", name: "Enterprise", emoji: "🎥", badge: "7 días gratis",        priceMonthly: PRECIOS.enterprise.mensual, priceAnnual: PRECIOS.enterprise.anual,  color: "#0f766e", accent: "#2dd4bf", participants: 30, hasVideo: true,  hasEarpiece: false, mpLink: MP_LINKS.enterprise,   usd: "~USD 32",  trialDays: 7,
+    features: ["🎁 7 días gratis para probar", "👥 Hasta 30 participantes", "📹 Videollamada Jitsi", "💬 Chat traductor", "🖥️ Compartir pantalla", `📁 Archivos hasta ${MAX_FILE_MB}MB`, "10 idiomas", "Soporte 24/7"] },
+  { id: "auricular",  name: "Auricular",  emoji: "🎧", badge: "7 días gratis",        priceMonthly: PRECIOS.auricular.mensual, priceAnnual: PRECIOS.auricular.anual,   color: "#b45309", accent: "#fbbf24", participants: 30, hasVideo: false, hasEarpiece: true,  mpLink: MP_LINKS.auricular,    usd: "~USD 42",  trialDays: 7,
+    features: ["🎁 7 días gratis para probar", "👥 Hasta 30 participantes", "🎧 Traducción simultánea por auricular", "🗣️ Voz masculina o femenina", "🎙️ Comando 'Hola GlobalMeet'", "Manos libres · sin tocar pantalla", "10 idiomas en tiempo real", "Funciona con cualquier auricular Bluetooth", "Soporte 24/7"] },
 ];
 
 const SPK = {
@@ -929,6 +929,7 @@ function Dashboard({ user, plan, onStartRoom, onGoPlans, onLogout }) {
   const canPro   = plan.id==="pro"||plan.id==="enterprise"||plan.id==="auricular";
   const canEnt   = plan.id==="enterprise";
   const canAur   = plan.id==="auricular";
+  const maxPart  = (plan.id==="enterprise"||plan.id==="auricular") ? 30 : plan.id==="pro" ? 3 : 2;
   const notifs   = [];
   if (daysLeft===3)            notifs.push({ t:"warn",  m:`⚠️ Tu plan vence en 3 días (${planEnd?.toLocaleDateString("es-AR")}). Renovalo para no perder acceso.` });
   if (daysLeft===1)            notifs.push({ t:"warn",  m:"⚠️ Tu plan vence mañana. ¡Renovalo hoy!" });
@@ -981,8 +982,8 @@ function Dashboard({ user, plan, onStartRoom, onGoPlans, onLogout }) {
           <div style={{ display:"grid", gridTemplateColumns: isMobile?"1fr 1fr":"repeat(4,1fr)", gap:"10px" }}>
             <RoomBtn icon="👥" label="2 Participantes" desc="Bilingüe"   color="#2563eb" available onClick={()=>onStartRoom(2,false,false)} />
             <RoomBtn icon="👨‍👩‍👧" label="3 Participantes" desc="Trilingüe"  color="#7c3aed" available={canPro} locked={!canPro} onUpgrade={onGoPlans} onClick={()=>onStartRoom(3,false,false)} />
-            <RoomBtn icon="🎥"  label="Video + Chat"   desc="Enterprise"  color="#0f766e" available={canEnt}  locked={!canEnt}  onUpgrade={onGoPlans} onClick={()=>onStartRoom(3,true,false)}  isNew />
-            <RoomBtn icon="🎧"  label="Modo Auricular"  desc="Voz IA · manos libres" color="#b45309" available={canAur} locked={!canAur} onUpgrade={onGoPlans} onClick={()=>onStartRoom(2,false,true)} isNew style={{ gridColumn: isMobile?"1 / -1":"auto" }} />
+            <RoomBtn icon="🎥"  label="Video + Chat"   desc={canEnt?"Hasta 30 personas":"Enterprise"}  color="#0f766e" available={canEnt}  locked={!canEnt}  onUpgrade={onGoPlans} onClick={()=>onStartRoom(30,true,false)}  isNew />
+            <RoomBtn icon="🎧"  label="Modo Auricular"  desc={canAur?"Hasta 30 personas":"Voz IA · manos libres"} color="#b45309" available={canAur} locked={!canAur} onUpgrade={onGoPlans} onClick={()=>onStartRoom(30,false,true)} isNew style={{ gridColumn: isMobile?"1 / -1":"auto" }} />
           </div>
         </div>
 
@@ -1087,7 +1088,55 @@ function RoomSetup({ count, hasVideo, hasEarpiece, user, onStart, onBack, prefil
   );
 }
 
-// ── Sonido de notificación (Web Audio API — sin archivos externos) ─────────────
+// ── Confetti — animación cuando alguien entra ────────────────────────────────
+function Confetti({ active }) {
+  const [pieces, setPieces] = useState([]);
+
+  useEffect(() => {
+    if (!active) return;
+    const colors = ["#4f46e5","#7c3aed","#2dd4bf","#f472b6","#fbbf24","#34d399","#60a5fa","#f87171"];
+    const newPieces = Array.from({ length: 80 }, (_, i) => ({
+      id: i,
+      x: Math.random() * 100,
+      delay: Math.random() * 0.8,
+      duration: 1.5 + Math.random() * 1.5,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      size: 6 + Math.random() * 8,
+      rotation: Math.random() * 360,
+      shape: Math.random() > 0.5 ? "rect" : "circle",
+    }));
+    setPieces(newPieces);
+    const timer = setTimeout(() => setPieces([]), 3500);
+    return () => clearTimeout(timer);
+  }, [active]);
+
+  if (!pieces.length) return null;
+
+  return (
+    <div style={{ position:"fixed", inset:0, pointerEvents:"none", zIndex:200, overflow:"hidden" }}>
+      <style>{`
+        @keyframes confettiFall {
+          0%   { transform: translateY(-20px) rotate(0deg); opacity: 1; }
+          100% { transform: translateY(110vh) rotate(720deg); opacity: 0; }
+        }
+      `}</style>
+      {pieces.map(p => (
+        <div key={p.id} style={{
+          position: "absolute",
+          left: `${p.x}%`,
+          top: "-20px",
+          width: p.shape === "circle" ? `${p.size}px` : `${p.size}px`,
+          height: p.shape === "circle" ? `${p.size}px` : `${p.size * 0.6}px`,
+          borderRadius: p.shape === "circle" ? "50%" : "2px",
+          background: p.color,
+          animation: `confettiFall ${p.duration}s ease-in ${p.delay}s forwards`,
+          transform: `rotate(${p.rotation}deg)`,
+          opacity: 0,
+        }} />
+      ))}
+    </div>
+  );
+}
 function playJoinSound() {
   try {
     const ctx  = new (window.AudioContext || window.webkitAudioContext)();
@@ -1250,11 +1299,12 @@ function useChatLogic(config) {
 // ══════════════════════════════════════════════════════════════════════════════
 // CHAT ROOM
 // ══════════════════════════════════════════════════════════════════════════════
-function ChatRoom({ config, onBack }) {
+function ChatRoom({ config, onBack, onGoHome }) {
   const { isMobile } = useBreakpoint();
   const {messages,activeSpk,interims,participants,toggleMic,submitText}=useChatLogic(config);
   const [copied,setCopied]=useState(false);
-  const [joinNotif, setJoinNotif] = useState(null);
+  const [joinNotif,  setJoinNotif]  = useState(null);
+  const [confettiOn, setConfettiOn] = useState(false);
   const bottomRef=useRef(null);
   useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); },[messages,interims]);
 
@@ -1266,7 +1316,8 @@ function ChatRoom({ config, onBack }) {
     const newOnes = presenceList.filter(n => !prev.includes(n) && n !== (config.names?.A || "Usuario"));
     if (newOnes.length > 0) {
       setJoinNotif(`${newOnes[0]} se unió a la sala`);
-      setTimeout(() => setJoinNotif(null), 3000);
+      setConfettiOn(true);
+      setTimeout(() => { setJoinNotif(null); setConfettiOn(false); }, 3500);
     }
     prevPresence.current = presenceList;
   }, [presenceList]);
@@ -1280,6 +1331,7 @@ function ChatRoom({ config, onBack }) {
   return (
     <div style={{ height:"100dvh", background:"#080c14", display:"flex", flexDirection:"column", fontFamily:"'Segoe UI',system-ui,sans-serif", overflow:"hidden" }}>
       <BrowserBanner />
+      <Confetti active={confettiOn} />
       {/* Join notification */}
       {joinNotif && (
         <div style={{ position:"fixed", top:"60px", left:"50%", transform:"translateX(-50%)", background:"rgba(99,102,241,.95)", borderRadius:"20px", padding:"8px 18px", color:"#fff", fontSize:".8rem", fontWeight:"600", zIndex:100, boxShadow:"0 4px 20px rgba(0,0,0,.4)", animation:"fadeIn .3s ease", display:"flex", alignItems:"center", gap:"7px" }}>
@@ -1289,7 +1341,9 @@ function ChatRoom({ config, onBack }) {
       )}
       {/* Header */}
       <div style={{ background:"rgba(8,12,20,.96)", borderBottom:"1px solid rgba(255,255,255,.07)", padding: isMobile?"9px 12px":"10px 14px", display:"flex", alignItems:"center", justifyContent:"space-between", backdropFilter:"blur(10px)", flexShrink:0 }}>
-        <AppLogo size={24} withText />
+        <div style={{ cursor:"pointer" }} onClick={onGoHome}>
+          <AppLogo size={24} withText />
+        </div>
         <div style={{ display:"flex", gap:"6px" }}>
           <button onClick={copyLink} style={{ background:copied?"rgba(52,211,153,.1)":"rgba(99,102,241,.1)", border:`1px solid ${copied?"rgba(52,211,153,.3)":"rgba(99,102,241,.25)"}`, color:copied?"#34d399":"#818cf8", borderRadius:"7px", padding:"5px 9px", cursor:"pointer", fontSize:".66rem", fontFamily:"inherit", touchAction:"manipulation" }}>{copied?"✓":"🔗"}</button>
           <button onClick={onBack} style={{ background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.08)", color:"#475569", borderRadius:"7px", padding:"5px 9px", cursor:"pointer", fontSize:".66rem", fontFamily:"inherit", touchAction:"manipulation" }}>← Salir</button>
@@ -1357,8 +1411,59 @@ function ChatRoom({ config, onBack }) {
   );
 }
 
-// ── Need to pass recRef down for mobile stop
-const recRef = { current: null };
+// ══════════════════════════════════════════════════════════════════════════════
+// JOIN ROOM — pantalla simplificada para quien recibe el link
+// ══════════════════════════════════════════════════════════════════════════════
+function JoinRoom({ config, user, onJoin, onBack }) {
+  const { isMobile } = useBreakpoint();
+  const [myName, setMyName] = useState(user?.name || "");
+  const [myLang, setMyLang] = useState("en");
+
+  const join = () => {
+    if (!myName.trim()) return;
+    // Determinar qué participante es (B o C)
+    const spk = "B";
+    onJoin({
+      ...config,
+      names: { ...config.names, [spk]: myName.trim() },
+      langs: { ...config.langs, [spk]: myLang },
+    });
+  };
+
+  return (
+    <div style={{ minHeight:"100vh", background:"#080c14", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',system-ui,sans-serif", padding:"20px" }}>
+      <div style={{ width:"100%", maxWidth:"400px", background:"rgba(255,255,255,.04)", border:"1px solid rgba(99,102,241,.25)", borderRadius:"20px", padding:"28px 24px" }}>
+        <div style={{ display:"flex", justifyContent:"center", marginBottom:"16px" }}>
+          <AppLogo size={40} withText />
+        </div>
+        <h2 style={{ color:"#f1f5f9", fontSize:"1rem", fontWeight:"600", textAlign:"center", margin:"0 0 6px" }}>
+          📨 Te invitaron a una sala
+        </h2>
+        <p style={{ color:"#475569", fontSize:".78rem", textAlign:"center", margin:"0 0 20px" }}>
+          Código: <strong style={{ color:"#a5b4fc" }}>{config.roomCode}</strong>
+        </p>
+
+        <div style={{ display:"flex", flexDirection:"column", gap:"10px" }}>
+          <div>
+            <label style={{ color:"#64748b", fontSize:".7rem", letterSpacing:".08em", display:"block", marginBottom:"5px" }}>TU NOMBRE</label>
+            <input value={myName} onChange={e=>setMyName(e.target.value)} placeholder="¿Cómo te llamás?" style={{ background:"rgba(255,255,255,.06)", border:"1px solid rgba(255,255,255,.1)", color:"#e2e8f0", borderRadius:"8px", padding:"10px 12px", fontSize:".88rem", outline:"none", fontFamily:"inherit", width:"100%", boxSizing:"border-box" }} />
+          </div>
+          <div>
+            <label style={{ color:"#64748b", fontSize:".7rem", letterSpacing:".08em", display:"block", marginBottom:"5px" }}>TU IDIOMA</label>
+            <LangSelect value={myLang} onChange={setMyLang} />
+          </div>
+          <button onClick={join} disabled={!myName.trim()} style={{ background:"linear-gradient(135deg,#4f46e5,#7c3aed)", border:"none", color:"#fff", borderRadius:"10px", padding:"12px", fontSize:".9rem", fontWeight:"600", cursor:"pointer", fontFamily:"inherit", opacity:myName.trim()?1:.5, touchAction:"manipulation" }}>
+            Entrar a la sala →
+          </button>
+          <button onClick={onBack} style={{ background:"none", border:"none", color:"#334155", cursor:"pointer", fontSize:".76rem", fontFamily:"inherit" }}>
+            ← Volver al inicio
+          </button>
+        </div>
+        <div style={{ textAlign:"center", color:"#1e293b", fontSize:".62rem", marginTop:"14px" }}>DISEÑADO POR MOMENTOS</div>
+      </div>
+    </div>
+  );
+}
 
 function MicBtn({ spk, config, activeSpk, toggleMic }) {
   const c=SPK[spk]; const lang=LANGUAGES.find(l=>l.code===config.langs[spk]);
@@ -1839,9 +1944,8 @@ export default function App() {
           const pendingRoom = localStorage.getItem("gm_pending_room");
           if (pendingRoom) {
             localStorage.removeItem("gm_pending_room");
-            // Mostrar setup de sala con ese código
             setChatCfg({ roomCode: pendingRoom, count: 2, hasVideo: false, hasEarpiece: false, names: { A: userData.name, B: "Participante B" }, langs: { A: "es", B: "en" } });
-            setScreen("roomSetup");
+            setScreen("joinRoom");
           } else {
             setScreen("dashboard");
           }
@@ -1851,7 +1955,6 @@ export default function App() {
   }, []);
 
   const handleLogin = u => {
-    // Leer plan seleccionado antes del login
     let selectedPlan = "trial";
     try {
       const saved = localStorage.getItem("gm_selected_plan");
@@ -1861,13 +1964,13 @@ export default function App() {
     setUser({ ...u, joinedAt: u.joinedAt || new Date() });
     setPlan({ id: u.planId || selectedPlan });
 
-    // Si hay sala pendiente, ir directo a la sala
+    // Si hay sala pendiente, ir directo
     try {
       const pendingRoom = localStorage.getItem("gm_pending_room");
       if (pendingRoom) {
         localStorage.removeItem("gm_pending_room");
         setChatCfg({ roomCode: pendingRoom, count: 2, hasVideo: false, hasEarpiece: false, names: { A: u.name, B: "Participante B" }, langs: { A: "es", B: "en" } });
-        setScreen("roomSetup");
+        setScreen("joinRoom");
         return;
       }
     } catch {}
@@ -1914,8 +2017,9 @@ export default function App() {
   if (screen === "trialExpired") return <TrialExpiredWall onGoPlans={() => setScreen("landing")} />;
   if (screen === "dashboard")    return <Dashboard user={user} plan={plan} onStartRoom={handleStart} onGoPlans={() => setScreen("landing")} onLogout={handleLogout} />;
   if (screen === "roomSetup")    return <RoomSetup count={roomCount} hasVideo={hasVideo} hasEarpiece={hasEarpiece} user={user} onStart={handleLaunch} onBack={() => setScreen("dashboard")} prefilledRoomCode={chatCfg?.roomCode} />;
-  if (screen === "chat")         return <ChatRoom config={chatCfg} onBack={() => setScreen("dashboard")} />;
-  if (screen === "enterprise")   return <EnterpriseRoom config={chatCfg} onBack={() => setScreen("dashboard")} />;
-  if (screen === "earpiece")     return <EarpieceRoom config={chatCfg} onBack={() => setScreen("dashboard")} />;
+  if (screen === "joinRoom")     return <JoinRoom config={chatCfg} user={user} onJoin={handleLaunch} onBack={() => setScreen("landing")} />;
+  if (screen === "chat")         return <ChatRoom config={chatCfg} onBack={() => setScreen("dashboard")} onGoHome={() => setScreen("landing")} />;
+  if (screen === "enterprise")   return <EnterpriseRoom config={chatCfg} onBack={() => setScreen("dashboard")} onGoHome={() => setScreen("landing")} />;
+  if (screen === "earpiece")     return <EarpieceRoom config={chatCfg} onBack={() => setScreen("dashboard")} onGoHome={() => setScreen("landing")} />;
   return null;
 }
